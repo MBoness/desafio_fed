@@ -38,6 +38,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 ## D7. Secrets
 - **Decision:** no secrets in git. Values come from environment variables (`TF_VAR_*`), Terraform creates Kubernetes Secrets, Airflow reads them from the environment. `.env.example` documents the variable names only.
 - **Why:** challenge criterion; the repository is public.
+- **Secrets Manager considered:** AWS Secrets Manager is the production path (rotation, audit, native Airflow secrets backend), but it does not remove the bootstrap problem: Airflow on Minikube still needs an initial AWS credential to read from it, and secrets created by Terraform end up in the state. For this POC we keep Kubernetes Secrets and mention Secrets Manager as the production evolution (talking point for the video).
 - **AWS access:** a dedicated IAM user with least privilege (read/write only on the three project buckets), not the admin user used to run Terraform.
 
 ## D8. Terraform state
