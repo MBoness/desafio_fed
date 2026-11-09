@@ -16,6 +16,18 @@ variable "airflow_namespace" {
   default     = "airflow"
 }
 
+variable "airflow_chart_version" {
+  description = "Version of the official Apache Airflow Helm chart (1.22.0 installs Airflow 3.2.2)."
+  type        = string
+  default     = "1.22.0"
+}
+
+variable "airflow_admin_password" {
+  description = "Password of the Airflow admin user. Set it with TF_VAR_airflow_admin_password; never commit it."
+  type        = string
+  sensitive   = true
+}
+
 variable "source_files_node_path" {
   description = "Folder inside the Minikube node where scripts/deliver_source_files.py drops the CSV files."
   type        = string

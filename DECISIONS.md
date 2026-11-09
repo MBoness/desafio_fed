@@ -35,6 +35,9 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Decision:** Minikube + official Airflow Helm chart, applied through Terraform (`helm_release`). Custom Airflow image with Meltano in an isolated virtualenv; Meltano is called by the DAG.
 - **Why:** infrastructure is code and reproducible; the isolated virtualenv avoids dependency conflicts between Airflow and Meltano.
 - **Alternatives:** hand-written manifests; running Meltano in separate pods with `KubernetesPodOperator` (better isolation, more complexity).
+- **Executor:** `LocalExecutor` (tasks run inside the scheduler). The chart default, `CeleryExecutor`, adds workers and Redis, which is heavy for a 6 GB Minikube and unnecessary for this pipeline.
+- **Chart pinned** to 1.22.0 (Airflow 3.2.2) for reproducibility.
+- **Helm hooks disabled for the migration and create-user jobs** (`useHelmHooks = false`). By default they run only after the release is ready, but the pods wait for the migration, so with Terraform's `wait = true` the install deadlocks and times out. Found when the first apply failed after 15 minutes.
 
 ## D7. Secrets
 - **Decision:** no secrets in git. Values come from environment variables (`TF_VAR_*`), Terraform creates Kubernetes Secrets, Airflow reads them from the environment. `.env.example` documents the variable names only.
