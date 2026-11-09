@@ -79,6 +79,15 @@ resource "helm_release" "airflow" {
     # Tasks run inside the scheduler: no Celery workers or Redis to run and explain.
     executor = "LocalExecutor"
 
+    # Custom image: official Airflow + isolated Meltano + our DAGs. It is loaded
+    # into the Minikube node (`minikube image load`), never pulled from a registry.
+    images = {
+      airflow = {
+        repository = var.airflow_image_repository
+        tag        = var.airflow_image_tag
+      }
+    }
+
     fernetKeySecretName    = local.fernet_secret_name
     apiSecretKeySecretName = local.api_secret_name
     jwtSecretName          = local.jwt_secret_name

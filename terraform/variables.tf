@@ -22,6 +22,18 @@ variable "airflow_chart_version" {
   default     = "1.22.0"
 }
 
+variable "airflow_image_repository" {
+  description = "Name of the custom Airflow image (built from docker/airflow.Dockerfile)."
+  type        = string
+  default     = "banvic-airflow"
+}
+
+variable "airflow_image_tag" {
+  description = "Tag of the custom Airflow image. Bump it on every rebuild so Kubernetes rolls the pods."
+  type        = string
+  default     = "0.1.0"
+}
+
 variable "airflow_admin_password" {
   description = "Password of the Airflow admin user. Set it with TF_VAR_airflow_admin_password; never commit it."
   type        = string

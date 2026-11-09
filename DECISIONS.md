@@ -36,6 +36,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** infrastructure is code and reproducible; the isolated virtualenv avoids dependency conflicts between Airflow and Meltano.
 - **Alternatives:** hand-written manifests; running Meltano in separate pods with `KubernetesPodOperator` (better isolation, more complexity).
 - **Executor:** `LocalExecutor` (tasks run inside the scheduler). The chart default, `CeleryExecutor`, adds workers and Redis, which is heavy for a 6 GB Minikube and unnecessary for this pipeline.
+- **DAGs delivery:** baked into the custom image (`docker/airflow.Dockerfile` copies `dags/`), together with Meltano (4.4.1, in its own virtualenv; only the `meltano` command is exposed so it cannot shadow Airflow's `python`/`pip`). Code and runtime ship as one versioned unit, which is predictable for the demo. Trade-off: every DAG change needs an image rebuild and a new tag. Alternative: `gitSync` (no rebuild, but depends on a branch in GitHub). The image is built locally and loaded into Minikube (`minikube image load`), not pushed to a registry.
 - **Chart pinned** to 1.22.0 (Airflow 3.2.2) for reproducibility.
 - **Helm hooks disabled for the migration and create-user jobs** (`useHelmHooks = false`). By default they run only after the release is ready, but the pods wait for the migration, so with Terraform's `wait = true` the install deadlocks and times out. Found when the first apply failed after 15 minutes.
 
