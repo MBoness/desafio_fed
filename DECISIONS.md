@@ -10,8 +10,9 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Trade-off:** the PDF lists "Postgres or MinIO" as destinations. S3 is the managed equivalent of MinIO (same API), so this is a small, deliberate deviation. Reproducing the project requires an AWS account.
 
 ## D2. Source
-- **Decision:** the 7 BanVic CSV files in a local folder, mounted into the cluster. An Airflow `FileSensor` waits for them.
-- **Why:** simulates a legacy/on-premises system, as asked by the challenge.
+- **Decision:** the 7 BanVic CSV files live in a local folder (`data/`, git-ignored). `scripts/deliver_source_files.py` copies them into the Minikube node (`/data/banvic`), simulating the legacy system dropping its export. A `hostPath` volume exposes that folder to Airflow, and a `FileSensor` waits for the files.
+- **Why:** simulates a legacy/on-premises system, as asked by the challenge, and makes the sensor visible in the demo (deliver files → sensor fires).
+- **Alternatives:** `minikube start --mount` (Docker Desktop on Windows did not expose the bind mount inside the node); `minikube mount` (needs a terminal kept open, fragile); ConfigMap (1 MB limit, data is 4.7 MB); baking files into the image (mixes data with code).
 
 ## D3. Destination and layers
 - **Decision:** three S3 buckets created by Terraform: `raw`, `standard`, `curated`.
@@ -55,7 +56,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** the data is tiny (a few MB), so cost should be cents, but alerts and cleanup are good practice.
 
 ## D11. Tooling and language
-- Shell: Git Bash on Windows. AWS profile: `pessoal` (set through a Terraform variable, not hardcoded in the environment).
+- Shell: Git Bash on Windows. Helper scripts are written in Python (standard library only) rather than shell, so they run on any OS and avoid Git Bash path rewriting. AWS profile: `pessoal` (set through a Terraform variable, not hardcoded in the environment).
 - Code, comments and documentation in English.
 - The source CSV files are **not** committed (see `.gitignore`).
 
@@ -64,6 +65,10 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** keeps the transformation next to the data in AWS, reuses patterns from earlier Glue studies, and shows Airflow orchestrating a managed service.
 - **Trade-off:** Glue adds an IAM role, a scripts bucket, a start-up delay of about a minute per run and a few cents of cost. For a few MB of data Spark is more than needed, so the jobs stay minimal.
 - **Fallback:** if Glue becomes too heavy, do the same cleaning in a small Python/DuckDB task.
+
+## Possible future improvements (optional, not committed to)
+- **History by delivery date.** Today each run overwrites a fixed path in `raw` (D5), so a new delivery replaces the previous one and no history is kept. To keep history, include the delivery date in the path (e.g. `raw/<table>/delivery_date=YYYY-MM-DD/`). Reruns for the same date would still overwrite only that date, so idempotency is preserved. Downstream layers would then need to choose which deliveries to read (latest, or all).
+- **Automatic delivery to the node.** Today `scripts/deliver_source_files.py` is run by hand (see D2). A host-side watcher could run it when `data/` changes, at the cost of a process that must stay running.
 
 ## Out of scope
 - Athena/Glue (SQL over S3), dbt, remote Terraform state, applying infrastructure from CI.
