@@ -22,6 +22,9 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** classic medallion-style separation; each layer has one responsibility, and reruns only touch the layer they write to.
 - **Naming:** bucket names include the AWS account id (S3 names are globally unique). `curated` follows the naming used in earlier studies (raw/processed/curated).
 
+- **Region:** `us-east-1` (variable `aws_region`). The data is a few MB, so the choice only affects latency and the number of available examples.
+- **Buckets:** versioning (safety net for the overwrite strategy in D5), SSE-S3 encryption and full public access block. `force_destroy = true` so the final `terraform destroy` can empty them; acceptable because the data is a re-creatable copy of the CSV files.
+
 ## D4. Ingestion tool
 - **Decision:** Meltano (`tap-csv` → S3 target). The pipeline is ELT: extract and load first, light transformations afterwards.
 - **Why:** taught in the course, configuration is declarative (YAML), Python-based.
@@ -44,7 +47,8 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Decision:** no secrets in git. Values come from environment variables (`TF_VAR_*`), Terraform creates Kubernetes Secrets, Airflow reads them from the environment. `.env.example` documents the variable names only.
 - **Why:** challenge criterion; the repository is public.
 - **Secrets Manager considered:** AWS Secrets Manager is the production path (rotation, audit, native Airflow secrets backend), but it does not remove the bootstrap problem: Airflow on Minikube still needs an initial AWS credential to read from it, and secrets created by Terraform end up in the state. For this POC we keep Kubernetes Secrets and mention Secrets Manager as the production evolution (talking point for the video).
-- **AWS access:** a dedicated IAM user with least privilege (read/write only on the three project buckets), not the admin user used to run Terraform.
+- **AWS access:** a dedicated IAM user (`banvic-pipeline`) with least privilege (list/read/write/delete objects only on the three project buckets), not the user used to run Terraform. Terraform creates its access key and writes it straight into the Kubernetes Secret `aws-lake-credentials` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, the names AWS SDKs read automatically). The key also lives in the local, git-ignored Terraform state, which is accepted for this POC (D8).
+- **Permissions of the Terraform user:** the `terraform-cli` user only had S3 access, so the first apply failed with 403 on `iam:CreateUser` and `budgets:ModifyBudget`. We added an inline policy limited to the `banvic-pipeline` user and Budgets. Granting it is a manual step in the AWS console, because a user cannot grant itself permissions. The Glue stage (D12) will need this policy extended.
 
 ## D8. Terraform state
 - **Decision:** local state, git-ignored.
@@ -56,7 +60,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** applying from CI would require cloud credentials in GitHub and a cluster reachable from the internet, which is out of proportion for a local Minikube.
 
 ## D10. Cost and cleanup
-- **Decision:** AWS Budget alert created by Terraform; a documented `terraform destroy` + `minikube delete` at the end.
+- **Decision:** AWS Budget alert created by Terraform (monthly limit of US$ 5, e-mail at 80% of actual spend and at 100% of forecast; the e-mail comes from `TF_VAR_budget_email`, not from the code). A Budget only warns, it never stops anything. A documented `terraform destroy` + `minikube delete` at the end.
 - **Why:** the data is tiny (a few MB), so cost should be cents, but alerts and cleanup are good practice.
 
 ## D11. Tooling and language
@@ -75,5 +79,5 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Automatic delivery to the node.** Today `scripts/deliver_source_files.py` is run by hand (see D2). A host-side watcher could run it when `data/` changes, at the cost of a process that must stay running.
 
 ## Out of scope
-- Athena/Glue (SQL over S3), dbt, remote Terraform state, applying infrastructure from CI.
+- Athena (SQL over S3), dbt, remote Terraform state, applying infrastructure from CI. (Glue jobs are in scope, see D12.)
 - The MCP server from the course was considered and dropped: the source is plain CSV files, so there is nothing to connect.
