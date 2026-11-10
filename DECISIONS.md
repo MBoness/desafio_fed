@@ -74,10 +74,20 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Lesson learned:** check that every container image and plugin exists and runs *before* writing the infrastructure around it. The MinIO chart installed fine, but its image could no longer be pulled.
 
 ## D12. Transformations: raw → standard → curated
-- **Decision:** the layers are built with plain SQL, run as Airflow tasks against the warehouse (a connection configured from the Kubernetes Secret). `standard` casts types, fixes dates and removes duplicates and nulls; `curated` holds one or two analyst-ready tables.
+- **Decision:** the layers are built with plain SQL, run as Airflow tasks against the warehouse (a connection configured from the Kubernetes Secret). `standard` casts types (integers, numerics, dates and timestamps), turns blank text into NULL, drops the Meltano `_sdc_*` columns and adds two metadata columns, `source_extracted_at` (when Meltano read the file) and `processed_at` (when the table was built). Column names already arrive in snake_case, so nothing is renamed. `curated` is created but empty: it waits for the business rules that define the standard → curated transformations (the DAG has a placeholder task for it). The data was profiled beforehand (no duplicated or empty keys), so no deduplication is needed.
 - **Why:** the data is a few MB, so SQL in Postgres is the simplest tool and the language the whole team already knows. Each task is a `.sql` file, easy to read, review and explain.
 - **Alternatives:** Spark/Glue jobs (a lot of infrastructure for a few MB); dbt (a good fit, but one more tool to install, configure and explain).
 - **Production path:** the same layers on object storage with a managed engine (Glue, Athena or dbt); the SQL is largely reusable.
+
+## D13. DAG design (`dags/banvic_pipeline.py`)
+- **Flow:** `wait_for_files` → `ingest_<table>` (x7) → `validate_counts` → `standardize_<table>` (x7) → `build_curated`. Manual runs only (`schedule=None`): the source is a file delivery, not a clock.
+- **One ingest task per table**, so a failure retries only that table and the UI shows each load. Each task runs `meltano el tap-csv target-postgres --select <table>`.
+- **`max_active_tasks=1`.** Meltano keeps its run state in a local SQLite file, and seven concurrent loads would fight over it. The tasks therefore run one at a time; the data is small, so it costs seconds.
+- **Sensor:** a `PythonSensor` (reschedule mode) checks that the 7 files exist. `FileSensor` was not used: it needs a filesystem connection and watches one file per task.
+- **Validation:** one task compares the row count of each CSV (parsed with `csv.reader`, since quoted fields may contain line breaks) with `count(*)` of the `raw` table, and fails on any difference.
+- **Standard is rebuilt, not patched:** each `.sql` file does `DROP TABLE` + `CREATE TABLE AS` + primary key, and Airflow runs it in a single transaction. Re-running is safe and readers never see a half-built table.
+- **Resilience:** `retries=2` with a 30 s `retry_delay` (a transient failure, such as Postgres restarting, has time to clear) and an `on_failure_callback` that logs DAG, task, run, attempt and error in one line. The 30 s delay is short on purpose for the demo; a real deployment would use minutes, possibly with exponential backoff.
+- **SQL in files:** the transformations live in `dags/sql/standard/*.sql`, outside the Python code, so they can be reviewed and changed without touching the DAG.
 
 ## Possible future improvements (optional, not committed to)
 - **Deletions at the source.** With upsert, rows removed from the CSV stay in `raw` (D5). Handling them needs a full refresh or a delete marker (`ACTIVATE_VERSION` / `hard_delete` in the target), which requires a tap that sends those messages.

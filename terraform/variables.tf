@@ -1,4 +1,4 @@
-variable "kubeconfig_path" {
+﻿variable "kubeconfig_path" {
   description = "Path to the kubeconfig file used to reach the cluster."
   type        = string
   default     = "~/.kube/config"
@@ -31,7 +31,7 @@ variable "airflow_image_repository" {
 variable "airflow_image_tag" {
   description = "Tag of the custom Airflow image. Bump it on every rebuild so Kubernetes rolls the pods."
   type        = string
-  default     = "0.2.1"
+  default     = "0.2.2"
 }
 
 variable "airflow_admin_password" {
