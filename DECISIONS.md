@@ -4,10 +4,13 @@ Short record of the important decisions and why they were made.
 Format: **Decision** → **Why** → **Alternatives considered**.
 
 ## D1. Where everything runs
-- **Decision:** hybrid. Source files are on-premises (local machine). Airflow and Meltano run on a local Kubernetes cluster (Minikube). The data lake lives in AWS S3.
-- **Why:** the challenge requires a local Kubernetes environment; a real S3 data lake is closer to what analysts would use in production, and Terraform can provision it.
-- **Alternatives:** 100% local with MinIO (fully reproducible without an AWS account, but less realistic); everything in AWS/EKS (costly, out of scope).
-- **Trade-off:** the PDF lists "Postgres or MinIO" as destinations. S3 is the managed equivalent of MinIO (same API), so this is a small, deliberate deviation. Reproducing the project requires an AWS account.
+- **Decision:** everything runs locally. Source files are on-premises (local machine) and the data warehouse is a Postgres running next to Airflow and Meltano on a local Kubernetes cluster (Minikube).
+- **Why:** the challenge asks for storage ("Postgres or MinIO") on a local Kubernetes environment. A local destination makes the project reproducible with no cloud account and no cost.
+- **Alternatives, in the order they were tried:**
+  1. *S3 on AWS.* Built and applied with Terraform (buckets, least-privilege IAM user, budget alert), then removed: it needs an AWS account to reproduce, which goes against the "local" requirement.
+  2. *MinIO in the cluster.* Dropped before it ran: the official images are no longer public (`quay.io/minio/minio` answers 401 and Docker Hub `minio/minio` denies access, checked on 2026-11-10). Only unofficial community forks remain, which is a reproducibility risk.
+  3. *Postgres* (chosen): official image, permanent, and one of the two destinations the challenge allows.
+- **Production path:** an object-storage data lake (S3 with Parquet) plus a managed engine. The Meltano and Airflow parts would stay the same; only the target and the SQL tasks change.
 
 ## D2. Source
 - **Decision:** the 7 BanVic CSV files live in a local folder (`data/`, git-ignored). `scripts/deliver_source_files.py` copies them into the Minikube node (`/data/banvic`), simulating the legacy system dropping its export. A `hostPath` volume exposes that folder to Airflow, and a `FileSensor` waits for the files.
@@ -15,24 +18,23 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Alternatives:** `minikube start --mount` (Docker Desktop on Windows did not expose the bind mount inside the node); `minikube mount` (needs a terminal kept open, fragile); ConfigMap (1 MB limit, data is 4.7 MB); baking files into the image (mixes data with code).
 
 ## D3. Destination and layers
-- **Decision:** three S3 buckets created by Terraform: `raw`, `standard`, `curated`.
-  - `raw`: data as it arrived, no value changes.
-  - `standard`: validated and cleaned (types, dates, duplicates, nulls), Parquet.
+- **Decision:** one Postgres database (`banvic`) with three schemas created by Terraform: `raw`, `standard`, `curated`.
+  - `raw`: data as it arrived, no value changes. Every column is text; the loader adds `_sdc_*` metadata columns.
+  - `standard`: validated and cleaned (types, dates, duplicates, nulls).
   - `curated`: one or two analyst-ready tables.
-- **Why:** classic medallion-style separation; each layer has one responsibility, and reruns only touch the layer they write to.
-- **Naming:** bucket names include the AWS account id (S3 names are globally unique). `curated` follows the naming used in earlier studies (raw/processed/curated).
-
-- **Region:** `us-east-1` (variable `aws_region`). The data is a few MB, so the choice only affects latency and the number of available examples.
-- **Buckets:** versioning (safety net for the overwrite strategy in D5), SSE-S3 encryption and full public access block. `force_destroy = true` so the final `terraform destroy` can empty them; acceptable because the data is a re-creatable copy of the CSV files.
+- **Why:** classic medallion-style separation; each layer has one responsibility, and reruns only touch the layer they write to. Schemas give the same separation as buckets with a single piece of infrastructure.
+- **Postgres is separate from Airflow's metadata database** on purpose: orchestration state and business data have different lifecycles. It is a small StatefulSet with the official `postgres:17-alpine` image; the schemas come from an init script in a ConfigMap, so they exist as soon as the database starts.
 
 ## D4. Ingestion tool
-- **Decision:** Meltano (`tap-csv` → S3 target). The pipeline is ELT: extract and load first, light transformations afterwards.
-- **Why:** taught in the course, configuration is declarative (YAML), Python-based.
-- **Alternatives:** Embulk.
+- **Decision:** Meltano (`tap-csv`, Meltano variant → `target-postgres`, MeltanoLabs variant). The pipeline is ELT: extract and load first, light transformations afterwards.
+- **Why:** taught in the course, configuration is declarative (YAML), Python-based. Both plugins are maintained and run on the Python 3.13 of the Airflow image with no workaround.
+- **Alternatives:** Embulk. The S3 targets for Meltano (`target-s3-csv`, `target-s3`) were tested and are not maintained: they pin 2021-era dependencies (`boto3` 1.17, `pyarrow` 10) that fail on Python 3.13.
 
 ## D5. Ingestion strategy and idempotency
-- **Decision:** each run writes to a deterministic S3 path (overwrite), with primary keys declared per stream.
-- **Why:** running the same DAG twice gives the same result; no duplicates, no manual cleanup.
+- **Decision:** `load_method: upsert`, with the primary key of each table declared in `tap-csv` (the first column of each file). Running the same DAG twice gives the same result: rows are updated, not duplicated.
+- **Why:** it is a native feature of the target, needs no extra task and the table keeps a real primary key. The data was profiled: no duplicated or empty keys in any of the 7 files.
+- **Tested, not assumed:** `load_method: overwrite` looked simpler but did **not** overwrite with `tap-csv` (the target only truncates when the tap sends an `ACTIVATE_VERSION` message, and `tap-csv` does not), so two runs produced 20 rows. A `DROP TABLE` task before each load would work but is a home-made version of a standard pattern, so it was dropped in favour of upsert.
+- **Known limits:** rows deleted at the source are not removed from `raw`; and a duplicated key in a future delivery would make the load fail (which at least signals the problem).
 
 ## D6. Kubernetes and Airflow deployment
 - **Decision:** Minikube + official Airflow Helm chart, applied through Terraform (`helm_release`). Custom Airflow image with Meltano in an isolated virtualenv; Meltano is called by the DAG.
@@ -44,40 +46,41 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Helm hooks disabled for the migration and create-user jobs** (`useHelmHooks = false`). By default they run only after the release is ready, but the pods wait for the migration, so with Terraform's `wait = true` the install deadlocks and times out. Found when the first apply failed after 15 minutes.
 
 ## D7. Secrets
-- **Decision:** no secrets in git. Values live in a local, git-ignored `terraform/terraform.tfvars` (loaded automatically by Terraform); the README shows the expected names. Terraform creates Kubernetes Secrets and Airflow reads them from the environment. (Environment variables `TF_VAR_*` were used first, but they had to be set again in every terminal and every PowerShell command.)
+- **Decision:** no secrets in git. The Airflow admin password lives in a local, git-ignored `terraform/terraform.tfvars` (loaded automatically by Terraform); the README shows the expected name. Everything else is generated by Terraform (`random_*` resources: Airflow keys and the warehouse password) and stored only as Kubernetes Secrets, which Airflow and Meltano read from the environment.
 - **Why:** challenge criterion; the repository is public.
-- **Secrets Manager considered:** AWS Secrets Manager is the production path (rotation, audit, native Airflow secrets backend), but it does not remove the bootstrap problem: Airflow on Minikube still needs an initial AWS credential to read from it, and secrets created by Terraform end up in the state. For this POC we keep Kubernetes Secrets and mention Secrets Manager as the production evolution (talking point for the video).
-- **AWS access:** a dedicated IAM user (`banvic-pipeline`) with least privilege (list/read/write/delete objects only on the three project buckets), not the user used to run Terraform. Terraform creates its access key and writes it straight into the Kubernetes Secret `aws-lake-credentials` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, the names AWS SDKs read automatically). The key also lives in the local, git-ignored Terraform state, which is accepted for this POC (D8).
-- **Permissions of the Terraform user:** the `terraform-cli` user only had S3 access, so the first apply failed with 403 on `iam:CreateUser` and `budgets:ModifyBudget`. We added an inline policy limited to the `banvic-pipeline` user and Budgets. Granting it is a manual step in the AWS console, because a user cannot grant itself permissions. The Glue stage (D12) will need this policy extended.
+- **Secret manager considered:** a cloud secret manager (e.g. AWS Secrets Manager) is the production path (rotation, audit, native Airflow secrets backend), but it does not remove the bootstrap problem (Airflow still needs an initial credential to read from it), and secrets created by Terraform end up in the state. For this POC we keep Kubernetes Secrets and mention the secret manager as the production evolution (talking point for the video).
+- **Environment variables vs tfvars:** `TF_VAR_*` variables were used first, but they had to be set again in every terminal; `terraform.tfvars` removes that step. No example file is kept: the README shows the format in three lines.
 
 ## D8. Terraform state
 - **Decision:** local state, git-ignored.
-- **Why:** simplest option for a single-person POC; avoids the "bucket for the state must exist first" problem.
-- **In a team:** use a remote backend (S3 with locking) and one state per environment.
+- **Why:** simplest option for a single-person POC; avoids the "bucket for the state must exist first" problem. The generated passwords are in this state, which is why it is never committed.
+- **In a team:** use a remote backend (with locking) and one state per environment.
 
 ## D9. CI/CD
 - **Decision:** lightweight GitHub Actions, triggered on pull requests and on pushes to `develop` and `main`: `terraform fmt`/`validate` (no credentials), Python lint, DAG import test. `terraform apply` is manual from the local machine.
-- **Why:** applying from CI would require cloud credentials in GitHub and a cluster reachable from the internet, which is out of proportion for a local Minikube.
+- **Why:** applying from CI would require a cluster reachable from the internet, which is out of proportion for a local Minikube.
 
 ## D10. Cost and cleanup
-- **Decision:** AWS Budget alert created by Terraform (monthly limit of US$ 5, e-mail at 80% of actual spend and at 100% of forecast; the e-mail comes from the git-ignored `terraform.tfvars`, not from the code). A Budget only warns, it never stops anything. A documented `terraform destroy` + `minikube delete` at the end.
-- **Why:** the data is tiny (a few MB), so cost should be cents, but alerts and cleanup are good practice.
+- **Decision:** nothing in this project costs money: everything runs on the local machine. Cleanup is `terraform destroy` + `minikube delete`, documented in the README.
+- **Why:** removing the cloud dependency (D1) also removed the cost, the budget alert and the need to clean cloud leftovers.
 
 ## D11. Tooling and language
-- Shell: Git Bash on Windows. Helper scripts are written in Python (standard library only) rather than shell, so they run on any OS and avoid Git Bash path rewriting. AWS profile: `pessoal` (set through a Terraform variable, not hardcoded in the environment).
+- Shell: Git Bash on Windows. Helper scripts are written in Python (standard library only) rather than shell, so they run on any OS and avoid Git Bash path rewriting.
 - Code, comments and documentation in English.
 - The source CSV files are **not** committed (see `.gitignore`).
+- **Lesson learned:** check that every container image and plugin exists and runs *before* writing the infrastructure around it. The MinIO chart installed fine, but its image could no longer be pulled.
 
-## D12. Raw → standard transformation with AWS Glue
-- **Decision:** light transformations from `raw` to `standard` run as AWS Glue jobs (PySpark), provisioned by Terraform and triggered from the Airflow DAG. Built in a later stage, after the core ingestion (CSV → `raw`) works end to end.
-- **Why:** keeps the transformation next to the data in AWS, reuses patterns from earlier Glue studies, and shows Airflow orchestrating a managed service.
-- **Trade-off:** Glue adds an IAM role, a scripts bucket, a start-up delay of about a minute per run and a few cents of cost. For a few MB of data Spark is more than needed, so the jobs stay minimal.
-- **Fallback:** if Glue becomes too heavy, do the same cleaning in a small Python/DuckDB task.
+## D12. Transformations: raw → standard → curated
+- **Decision:** the layers are built with plain SQL, run as Airflow tasks against the warehouse (a connection configured from the Kubernetes Secret). `standard` casts types, fixes dates and removes duplicates and nulls; `curated` holds one or two analyst-ready tables.
+- **Why:** the data is a few MB, so SQL in Postgres is the simplest tool and the language the whole team already knows. Each task is a `.sql` file, easy to read, review and explain.
+- **Alternatives:** Spark/Glue jobs (a lot of infrastructure for a few MB); dbt (a good fit, but one more tool to install, configure and explain).
+- **Production path:** the same layers on object storage with a managed engine (Glue, Athena or dbt); the SQL is largely reusable.
 
 ## Possible future improvements (optional, not committed to)
-- **History by delivery date.** Today each run overwrites a fixed path in `raw` (D5), so a new delivery replaces the previous one and no history is kept. To keep history, include the delivery date in the path (e.g. `raw/<table>/delivery_date=YYYY-MM-DD/`). Reruns for the same date would still overwrite only that date, so idempotency is preserved. Downstream layers would then need to choose which deliveries to read (latest, or all).
+- **Deletions at the source.** With upsert, rows removed from the CSV stay in `raw` (D5). Handling them needs a full refresh or a delete marker (`ACTIVATE_VERSION` / `hard_delete` in the target), which requires a tap that sends those messages.
+- **History by delivery date.** Today a new delivery updates the tables in place and no history is kept. To keep it, add a delivery-date column (or a snapshot table) and let downstream layers choose which deliveries to read.
 - **Automatic delivery to the node.** Today `scripts/deliver_source_files.py` is run by hand (see D2). A host-side watcher could run it when `data/` changes, at the cost of a process that must stay running.
 
 ## Out of scope
-- Athena (SQL over S3), dbt, remote Terraform state, applying infrastructure from CI. (Glue jobs are in scope, see D12.)
+- Cloud services (S3, Glue, Athena), dbt, remote Terraform state, applying infrastructure from CI.
 - The MCP server from the course was considered and dropped: the source is plain CSV files, so there is nothing to connect.

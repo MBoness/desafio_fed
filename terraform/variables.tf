@@ -40,28 +40,10 @@ variable "airflow_admin_password" {
   sensitive   = true
 }
 
-variable "aws_profile" {
-  description = "AWS CLI profile used by Terraform. Fixed to the personal account so the company one is never touched."
+variable "warehouse_image" {
+  description = "Official Postgres image used as the data warehouse."
   type        = string
-  default     = "pessoal"
-}
-
-variable "aws_region" {
-  description = "AWS region for the data lake buckets."
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "budget_email" {
-  description = "E-mail that receives the AWS Budget alerts. Set it in terraform.tfvars (git-ignored); never commit it."
-  type        = string
-  sensitive   = true
-}
-
-variable "budget_limit_usd" {
-  description = "Monthly cost limit (USD) of the AWS Budget alert."
-  type        = number
-  default     = 5
+  default     = "postgres:17-alpine"
 }
 
 variable "source_files_node_path" {
