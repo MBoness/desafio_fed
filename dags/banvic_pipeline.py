@@ -2,7 +2,8 @@
 
 wait_for_files >> ingest_<table> (x7) >> validate_counts >> standardize_<table> (x7) >> build_curated
 
-Manual runs only (`schedule=None`): the source is a file delivery, not a clock.
+Runs daily and can also be triggered by hand. The sensor makes the schedule safe for
+a file delivery: if the files are late, the run waits for them (up to 30 minutes).
 Every step is idempotent, so re-running the whole DAG, or any single task, is safe:
 - ingest: Meltano upserts by primary key (see meltano/meltano.yml);
 - standardize: each table is dropped and rebuilt in one transaction.
@@ -56,12 +57,12 @@ def all_files_arrived() -> bool:
 
 with DAG(
     dag_id="banvic_pipeline",
-    schedule=None,
+    schedule="@daily",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    # Meltano keeps its run state in a local SQLite file; one task at a time avoids
-    # lock contention between the seven loads.
-    max_active_tasks=1,
+    # Two tasks at a time. Meltano keeps its run state in a local SQLite file, so
+    # more parallelism would only add lock contention for a few MB of data.
+    max_active_tasks=2,
     default_args={
         "retries": 2,
         # Wait before retrying so a transient failure (e.g. Postgres restarting) can clear.
@@ -110,7 +111,12 @@ with DAG(
         ingest = BashOperator(
             task_id=f"ingest_{table}",
             # `el` (extract-load) accepts --select, so each task loads a single stream.
-            bash_command=f"meltano el tap-csv target-postgres --select {table}",
+            # Meltano refuses two runs with the same state ID at once, so each table
+            # gets its own, which is what allows two loads to run in parallel.
+            bash_command=(
+                f"meltano el tap-csv target-postgres --select {table} "
+                f"--state-id banvic-{table}"
+            ),
         )
         standardize = SQLExecuteQueryOperator(
             task_id=f"standardize_{table}",

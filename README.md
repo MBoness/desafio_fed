@@ -79,8 +79,8 @@ python scripts/deliver_source_files.py
 **3. Build the Airflow image and load it into the cluster.** The tag must match `airflow_image_tag` in `terraform/variables.tf`:
 
 ```bash
-docker build -t banvic-airflow:0.2.2 -f docker/airflow.Dockerfile .
-minikube image load banvic-airflow:0.2.2
+docker build -t banvic-airflow:0.2.3 -f docker/airflow.Dockerfile .
+minikube image load banvic-airflow:0.2.3
 ```
 
 **4. Choose the Airflow admin password.** Create `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):
@@ -119,7 +119,7 @@ SELECT * FROM standard.transacoes LIMIT 5;
 
 ## Ingestion strategy
 
-The DAG `banvic_pipeline` is triggered manually, because the source is a file delivery and not a clock.
+The DAG `banvic_pipeline` runs daily and can also be triggered by hand. Because the source is a file delivery, the sensor waits for late files (up to 30 minutes) instead of failing. At most two tasks run at the same time.
 
 ```
 wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7) > build_curated
