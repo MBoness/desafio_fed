@@ -1,7 +1,7 @@
 """Simulate the legacy (on-premises) system delivering its CSV export.
 
 Copies every CSV in ./data into the Minikube node landing folder that
-Airflow watches with a FileSensor. In production the files would arrive
+Airflow watches with a sensor. In production the files would arrive
 through SFTP or an NFS share; this script stands in for that delivery.
 
 Usage (from any folder):
