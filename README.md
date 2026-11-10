@@ -24,6 +24,13 @@ Docker, Minikube, kubectl, Helm, Terraform, AWS CLI, an AWS account and a named 
 
 _To be added: step-by-step (deploy environment → trigger DAG → verify data)._
 
+Local values go in `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):
+
+```hcl
+airflow_admin_password = "..."
+budget_email           = "you@example.com"
+```
+
 ## Ingestion strategy
 
 _To be added: extraction, loading, idempotency, validations, layers._
@@ -34,7 +41,7 @@ _To be added: retries, alerts, validations._
 
 ## Security
 
-No secrets are stored in the repository. See `.env.example` for the expected variable names.
+No secrets are stored in the repository. Local values go in `terraform/terraform.tfvars`, which is git-ignored (see "How to run").
 
 ## Cleanup
 

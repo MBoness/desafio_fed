@@ -35,7 +35,7 @@ variable "airflow_image_tag" {
 }
 
 variable "airflow_admin_password" {
-  description = "Password of the Airflow admin user. Set it with TF_VAR_airflow_admin_password; never commit it."
+  description = "Password of the Airflow admin user. Set it in terraform.tfvars (git-ignored); never commit it."
   type        = string
   sensitive   = true
 }
@@ -53,7 +53,7 @@ variable "aws_region" {
 }
 
 variable "budget_email" {
-  description = "E-mail that receives the AWS Budget alerts. Set it with TF_VAR_budget_email; never commit it."
+  description = "E-mail that receives the AWS Budget alerts. Set it in terraform.tfvars (git-ignored); never commit it."
   type        = string
   sensitive   = true
 }

@@ -44,7 +44,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Helm hooks disabled for the migration and create-user jobs** (`useHelmHooks = false`). By default they run only after the release is ready, but the pods wait for the migration, so with Terraform's `wait = true` the install deadlocks and times out. Found when the first apply failed after 15 minutes.
 
 ## D7. Secrets
-- **Decision:** no secrets in git. Values come from environment variables (`TF_VAR_*`), Terraform creates Kubernetes Secrets, Airflow reads them from the environment. `.env.example` documents the variable names only.
+- **Decision:** no secrets in git. Values live in a local, git-ignored `terraform/terraform.tfvars` (loaded automatically by Terraform); the README shows the expected names. Terraform creates Kubernetes Secrets and Airflow reads them from the environment. (Environment variables `TF_VAR_*` were used first, but they had to be set again in every terminal and every PowerShell command.)
 - **Why:** challenge criterion; the repository is public.
 - **Secrets Manager considered:** AWS Secrets Manager is the production path (rotation, audit, native Airflow secrets backend), but it does not remove the bootstrap problem: Airflow on Minikube still needs an initial AWS credential to read from it, and secrets created by Terraform end up in the state. For this POC we keep Kubernetes Secrets and mention Secrets Manager as the production evolution (talking point for the video).
 - **AWS access:** a dedicated IAM user (`banvic-pipeline`) with least privilege (list/read/write/delete objects only on the three project buckets), not the user used to run Terraform. Terraform creates its access key and writes it straight into the Kubernetes Secret `aws-lake-credentials` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, the names AWS SDKs read automatically). The key also lives in the local, git-ignored Terraform state, which is accepted for this POC (D8).
@@ -60,7 +60,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Why:** applying from CI would require cloud credentials in GitHub and a cluster reachable from the internet, which is out of proportion for a local Minikube.
 
 ## D10. Cost and cleanup
-- **Decision:** AWS Budget alert created by Terraform (monthly limit of US$ 5, e-mail at 80% of actual spend and at 100% of forecast; the e-mail comes from `TF_VAR_budget_email`, not from the code). A Budget only warns, it never stops anything. A documented `terraform destroy` + `minikube delete` at the end.
+- **Decision:** AWS Budget alert created by Terraform (monthly limit of US$ 5, e-mail at 80% of actual spend and at 100% of forecast; the e-mail comes from the git-ignored `terraform.tfvars`, not from the code). A Budget only warns, it never stops anything. A documented `terraform destroy` + `minikube delete` at the end.
 - **Why:** the data is tiny (a few MB), so cost should be cents, but alerts and cleanup are good practice.
 
 ## D11. Tooling and language
