@@ -31,7 +31,7 @@ variable "airflow_image_repository" {
 variable "airflow_image_tag" {
   description = "Tag of the custom Airflow image. Bump it on every rebuild so Kubernetes rolls the pods."
   type        = string
-  default     = "0.2.3"
+  default     = "0.2.4"
 }
 
 variable "airflow_admin_password" {

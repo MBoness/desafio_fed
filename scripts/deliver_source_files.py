@@ -43,7 +43,11 @@ def main() -> None:
         # Relative POSIX path on purpose: `minikube cp` splits on ":" to find
         # the node name, so a Windows path like C:\... would be misread.
         source = f"{SOURCE_DIR}/{csv_file.name}"
-        run("minikube", "cp", source, f"minikube:{LANDING_DIR}/{csv_file.name}")
+        target = f"{LANDING_DIR}/{csv_file.name}"
+        run("minikube", "cp", source, f"minikube:{target}")
+        # `minikube cp` keeps the original modification time. The DAG sensor uses the
+        # file time to tell a new delivery from an old file, so stamp the delivery time.
+        run("minikube", "ssh", "--", "sudo", "touch", target)
 
     print("Files in the landing folder:")
     run("minikube", "ssh", "--", "ls", "-l", LANDING_DIR)

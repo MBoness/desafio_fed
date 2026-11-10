@@ -1,4 +1,4 @@
-# BanVic data platform (Data Engineer certification challenge)
+﻿# BanVic data platform (Data Engineer certification challenge)
 
 Proof of concept: ingest the BanVic ERP tables (7 CSV files, simulating an on-premises legacy system) into a Postgres data warehouse with `raw`, `standard` and `curated` layers, orchestrated by Airflow running on a local Kubernetes cluster. Everything runs on the local machine; no cloud account is needed.
 
@@ -39,7 +39,7 @@ flowchart LR
 | Source | Local folder with the 7 BanVic CSV files (on-premises simulation) |
 | Cluster | Minikube (Docker driver) |
 | Orchestration | Apache Airflow 3.2.2, official Helm chart, `LocalExecutor` |
-| Ingestion | Meltano 4.4.1 (`tap-csv` → `target-postgres`), installed in the Airflow image |
+| Ingestion | Meltano 4.4.1 (`tap-csv` â†’ `target-postgres`), installed in the Airflow image |
 | Warehouse | Postgres 17 in the cluster, schemas `raw`, `standard`, `curated` |
 | Infrastructure as code | Terraform (namespace, volumes, Secrets, Postgres, Helm release) |
 
@@ -79,8 +79,8 @@ python scripts/deliver_source_files.py
 **3. Build the Airflow image and load it into the cluster.** The tag must match `airflow_image_tag` in `terraform/variables.tf`:
 
 ```bash
-docker build -t banvic-airflow:0.2.3 -f docker/airflow.Dockerfile .
-minikube image load banvic-airflow:0.2.3
+docker build -t banvic-airflow:0.2.4 -f docker/airflow.Dockerfile .
+minikube image load banvic-airflow:0.2.4
 ```
 
 **4. Choose the Airflow admin password.** Create `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):
@@ -119,13 +119,13 @@ SELECT * FROM standard.transacoes LIMIT 5;
 
 ## Ingestion strategy
 
-The DAG `banvic_pipeline` runs daily and can also be triggered by hand. Because the source is a file delivery, the sensor waits for late files (up to 30 minutes) instead of failing. At most two tasks run at the same time.
+The DAG `banvic_pipeline` runs daily and can also be triggered by hand. Because the source is a file delivery, a scheduled run only proceeds when the 7 files are newer than the last successful run; it waits up to 30 minutes for them and is skipped if they do not arrive. A manual run only needs the files to exist. At most two tasks run at the same time.
 
 ```
 wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7) > build_curated
 ```
 
-1. **Sensor.** `wait_for_files` waits until the 7 files exist in the landing folder.
+1. **Sensor.** `wait_for_files` waits until the 7 files exist in the landing folder (and, for scheduled runs, are newer than the last successful run).
 2. **Extract and load (raw).** One Meltano task per table reads the CSV with `tap-csv` and loads it with `target-postgres` into schema `raw`. Everything arrives as text, plus Meltano's `_sdc_*` columns. The primary key of each table is declared in [`meltano/meltano.yml`](meltano/meltano.yml).
 3. **Validation.** `validate_counts` compares the number of rows in each CSV with the rows in the `raw` table and fails on any difference.
 4. **Standard.** One SQL file per table in [`dags/sql/standard/`](dags/sql/standard) casts the types (integers, numerics, dates, timestamps), turns blank text into NULL, drops the `_sdc_*` columns and adds `source_extracted_at` and `processed_at`.
@@ -140,7 +140,7 @@ wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7
 - **Retries.** Every task retries twice, waiting 30 seconds between attempts, so transient failures can clear.
 - **Failure log.** A failure callback writes one line with DAG, task, run, attempt and error, easy to find in the task log.
 - **Data validation.** The row-count check stops the pipeline before bad data reaches `standard`.
-- **Sensor timeout.** If the files never arrive, the sensor fails after 30 minutes instead of waiting forever.
+- **Sensor timeout.** If no new delivery arrives, the sensor stops after 30 minutes and the run is skipped instead of waiting forever.
 - **Visibility.** The Airflow UI shows the state and the logs of each task.
 
 ## Security

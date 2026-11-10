@@ -3,7 +3,8 @@
 wait_for_files >> ingest_<table> (x7) >> validate_counts >> standardize_<table> (x7) >> build_curated
 
 Runs daily and can also be triggered by hand. The sensor makes the schedule safe for
-a file delivery: if the files are late, the run waits for them (up to 30 minutes).
+a file delivery: a scheduled run waits (up to 30 minutes) for files newer than the
+last successful run, and is skipped if none arrive. A manual run only needs the files.
 Every step is idempotent, so re-running the whole DAG, or any single task, is safe:
 - ingest: Meltano upserts by primary key (see meltano/meltano.yml);
 - standardize: each table is dropped and rebuilt in one transaction.
@@ -48,11 +49,32 @@ def log_failure(context):
     )
 
 
-def all_files_arrived() -> bool:
-    missing = [t for t in TABLES if not (SOURCE_DIR / f"{t}.csv").exists()]
-    if missing:
-        log.info("Still waiting for: %s", ", ".join(missing))
-    return not missing
+def files_are_ready(source_dir: Path, tables: list[str], since: float | None) -> bool:
+    """True when every file exists and, if `since` is given, is newer than it."""
+    waiting = []
+    for table in tables:
+        path = source_dir / f"{table}.csv"
+        if not path.exists():
+            waiting.append(f"{table} (missing)")
+        elif since is not None and path.stat().st_mtime <= since:
+            waiting.append(f"{table} (not updated since the last run)")
+    if waiting:
+        log.info("Still waiting for: %s", ", ".join(waiting))
+    return not waiting
+
+
+def new_delivery_arrived(dag_run, prev_start_date_success=None) -> bool:
+    """Sensor condition.
+
+    A scheduled run only proceeds when all files were delivered after the previous
+    successful run started; otherwise the old files would be reprocessed every day.
+    A manual run only needs the files to exist: whoever triggers it means it.
+    """
+    since = None
+    run_type = getattr(dag_run.run_type, "value", dag_run.run_type)  # enum or plain str
+    if run_type != "manual" and prev_start_date_success:
+        since = prev_start_date_success.timestamp()
+    return files_are_ready(SOURCE_DIR, TABLES, since)
 
 
 with DAG(
@@ -74,10 +96,12 @@ with DAG(
     # reschedule mode frees the worker slot between checks.
     wait_for_files = PythonSensor(
         task_id="wait_for_files",
-        python_callable=all_files_arrived,
+        python_callable=new_delivery_arrived,
         mode="reschedule",
         poke_interval=30,
         timeout=60 * 30,
+        # No new delivery within the window is not an error: the run is skipped.
+        soft_fail=True,
     )
 
     @task
