@@ -28,6 +28,8 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 ## D4. Ingestion tool
 - **Decision:** Meltano (`tap-csv`, Meltano variant → `target-postgres`, MeltanoLabs variant). The pipeline is ELT: extract and load first, light transformations afterwards.
 - **Why:** taught in the course, configuration is declarative (YAML), Python-based. Both plugins are maintained and run on the Python 3.13 of the Airflow image with no workaround.
+- **Project layout:** `meltano/meltano.yml` holds the whole load definition (the 7 streams with their keys, host, schema, `load_method`) and is versioned together with the plugin lock files. Only the credentials (user, password, database) are left out: Terraform injects them as `TARGET_POSTGRES_*` env vars from the `warehouse-credentials` Secret. `meltano install` runs at image build time, so tasks never download anything while running.
+- **Environment required:** Meltano 4 refuses to run without an environment (`A Meltano environment must be specified`), so the project defines a single one, `prod`, as default. Found when the first `meltano run` in the cluster failed.
 - **Alternatives:** Embulk. The S3 targets for Meltano (`target-s3-csv`, `target-s3`) were tested and are not maintained: they pin 2021-era dependencies (`boto3` 1.17, `pyarrow` 10) that fail on Python 3.13.
 
 ## D5. Ingestion strategy and idempotency
@@ -42,6 +44,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Alternatives:** hand-written manifests; running Meltano in separate pods with `KubernetesPodOperator` (better isolation, more complexity).
 - **Executor:** `LocalExecutor` (tasks run inside the scheduler). The chart default, `CeleryExecutor`, adds workers and Redis, which is heavy for a 6 GB Minikube and unnecessary for this pipeline.
 - **DAGs delivery:** baked into the custom image (`docker/airflow.Dockerfile` copies `dags/`), together with Meltano (4.4.1, in its own virtualenv; only the `meltano` command is exposed so it cannot shadow Airflow's `python`/`pip`). Code and runtime ship as one versioned unit, which is predictable for the demo. Trade-off: every DAG change needs an image rebuild and a new tag. Alternative: `gitSync` (no rebuild, but depends on a branch in GitHub). The image is built locally and loaded into Minikube (`minikube image load`), not pushed to a registry.
+- **Warehouse connection:** Airflow reads the env var `AIRFLOW_CONN_WAREHOUSE` as the connection `warehouse`. Terraform builds the URI into its own Secret and the chart's `secret:` value exposes it to the pods, so no connection is created by hand in the UI and no password is in git.
 - **Chart pinned** to 1.22.0 (Airflow 3.2.2) for reproducibility.
 - **Helm hooks disabled for the migration and create-user jobs** (`useHelmHooks = false`). By default they run only after the release is ready, but the pods wait for the migration, so with Terraform's `wait = true` the install deadlocks and times out. Found when the first apply failed after 15 minutes.
 

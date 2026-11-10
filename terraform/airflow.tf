@@ -63,6 +63,22 @@ resource "kubernetes_secret_v1" "jwt_secret" {
   }
 }
 
+# --- Warehouse connection ---------------------------------------------------
+# Airflow reads any env var named AIRFLOW_CONN_<ID> as the connection <id>. The
+# URI embeds the password, so it lives in a Secret and reaches the pods only as
+# an env var (see `secret` in the Helm values below).
+resource "kubernetes_secret_v1" "warehouse_airflow_connection" {
+  metadata {
+    name      = "warehouse-airflow-connection"
+    namespace = kubernetes_namespace_v1.airflow.metadata[0].name
+    labels    = local.common_labels
+  }
+
+  data = {
+    connection = "postgresql://${local.warehouse_user}:${random_password.warehouse.result}@${local.warehouse_name}:5432/${local.warehouse_db}"
+  }
+}
+
 # --- Airflow ----------------------------------------------------------------
 resource "helm_release" "airflow" {
   name       = "airflow"
@@ -102,6 +118,16 @@ resource "helm_release" "airflow" {
     # Not needed with LocalExecutor / for this project; saves memory.
     redis  = { enabled = false }
     statsd = { enabled = false }
+
+    # Warehouse credentials, injected as env vars from Secrets (never in git or in
+    # the image). Meltano's target-postgres reads TARGET_POSTGRES_*; its other
+    # settings (host, schema, load method) are in meltano/meltano.yml.
+    secret = [
+      { envName = "AIRFLOW_CONN_WAREHOUSE", secretName = kubernetes_secret_v1.warehouse_airflow_connection.metadata[0].name, secretKey = "connection" },
+      { envName = "TARGET_POSTGRES_USER", secretName = local.warehouse_secret_name, secretKey = "POSTGRES_USER" },
+      { envName = "TARGET_POSTGRES_PASSWORD", secretName = local.warehouse_secret_name, secretKey = "POSTGRES_PASSWORD" },
+      { envName = "TARGET_POSTGRES_DATABASE", secretName = local.warehouse_secret_name, secretKey = "POSTGRES_DB" },
+    ]
 
     # Source CSV files, mounted read-only into every Airflow container.
     volumes = [{
