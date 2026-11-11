@@ -1,17 +1,17 @@
-DROP TABLE IF EXISTS standard.colaboradores;
+drop table if exists standard.colaboradores;
 
-CREATE TABLE standard.colaboradores AS
-SELECT
-    cod_colaborador::integer                     AS cod_colaborador,
-    NULLIF(btrim(primeiro_nome), '')             AS primeiro_nome,
-    NULLIF(btrim(ultimo_nome), '')               AS ultimo_nome,
-    NULLIF(btrim(email), '')                     AS email,
-    NULLIF(btrim(cpf), '')                       AS cpf,
-    NULLIF(btrim(data_nascimento), '')::date     AS data_nascimento,
-    NULLIF(btrim(endereco), '')                  AS endereco,
-    NULLIF(btrim(cep), '')                       AS cep,
-    _sdc_extracted_at                            AS source_extracted_at,
-    now()                                        AS processed_at
-FROM raw.colaboradores;
+create table standard.colaboradores as
+select
+    cod_colaborador::integer as cod_colaborador
+    , nullif(btrim(primeiro_nome), '') as primeiro_nome
+    , nullif(btrim(ultimo_nome), '') as ultimo_nome
+    , nullif(btrim(email), '') as email
+    , nullif(btrim(cpf), '') as cpf
+    , nullif(btrim(data_nascimento), '')::date as data_nascimento
+    , nullif(btrim(endereco), '') as endereco
+    , nullif(btrim(cep), '') as cep
+    , _sdc_extracted_at as source_extracted_at
+    , now() as processed_at
+from raw.colaboradores;
 
-ALTER TABLE standard.colaboradores ADD PRIMARY KEY (cod_colaborador);
+alter table standard.colaboradores add primary key (cod_colaborador);
