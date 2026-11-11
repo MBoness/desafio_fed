@@ -13,7 +13,9 @@ plugins:
   extractors:
     - name: tap-csv
       variant: meltanolabs
-      pip_url: git+https://github.com/MeltanoLabs/tap-csv.git
+      # Pinned to the exact commit tested in this project, so a rebuild cannot
+      # silently pull a different tap (the v1.2.0 tag is an older commit).
+      pip_url: git+https://github.com/MeltanoLabs/tap-csv.git@c38030a4a91f5132653a1891548b9a1df0702e99
       config:
         # One stream per file. `keys` is the primary key: it is what lets the
         # target upsert, so re-running the load never duplicates rows (DECISIONS D5).
@@ -29,7 +31,7 @@ plugins:
   loaders:
     - name: target-postgres
       variant: meltanolabs
-      pip_url: meltanolabs-target-postgres
+      pip_url: meltanolabs-target-postgres==0.8.1
       config:
         host: warehouse # in-cluster Service name
         port: 5432

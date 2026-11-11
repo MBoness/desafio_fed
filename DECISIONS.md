@@ -13,22 +13,22 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Production path:** an object-storage data lake (S3 with Parquet) plus a managed engine. The Meltano and Airflow parts would stay the same; only the target and the SQL tasks change.
 
 ## D2. Source
-- **Decision:** the 7 BanVic CSV files live in a local folder (`data/`, git-ignored). `scripts/deliver_source_files.py` copies them into the Minikube node (`/data/banvic`), simulating the legacy system dropping its export. A `hostPath` volume exposes that folder to Airflow, and a `FileSensor` waits for the files.
+- **Decision:** the 7 BanVic CSV files live in a local folder (`data/`, git-ignored). `scripts/deliver_source_files.py` copies them into the Minikube node (`/data/banvic`), simulating the legacy system dropping its export. A `hostPath` volume exposes that folder to Airflow, and a sensor waits for the files (a `PythonSensor`, see D13).
 - **Why:** simulates a legacy/on-premises system, as asked by the challenge, and makes the sensor visible in the demo (deliver files → sensor fires).
 - **Alternatives:** `minikube start --mount` (Docker Desktop on Windows did not expose the bind mount inside the node); `minikube mount` (needs a terminal kept open, fragile); ConfigMap (1 MB limit, data is 4.7 MB); baking files into the image (mixes data with code).
 
 ## D3. Destination and layers
 - **Decision:** one Postgres database (`banvic`) with three schemas created by Terraform: `raw`, `standard`, `curated`.
   - `raw`: data as it arrived, no value changes. Every column is text; the loader adds `_sdc_*` metadata columns.
-  - `standard`: validated and cleaned (types, dates, duplicates, nulls).
-  - `curated`: one or two analyst-ready tables.
+  - `standard`: validated and cleaned (types, dates, blanks as NULL); no deduplication needed (see D12).
+  - `curated`: analyst-ready tables; today one example table, `resumo_agencias` (see D12).
 - **Why:** classic medallion-style separation; each layer has one responsibility, and reruns only touch the layer they write to. Schemas give the same separation as buckets with a single piece of infrastructure.
 - **Postgres is separate from Airflow's metadata database** on purpose: orchestration state and business data have different lifecycles. It is a small StatefulSet with the official `postgres:17-alpine` image; the schemas come from an init script in a ConfigMap, so they exist as soon as the database starts.
 
 ## D4. Ingestion tool
-- **Decision:** Meltano (`tap-csv`, Meltano variant → `target-postgres`, MeltanoLabs variant). The pipeline is ELT: extract and load first, light transformations afterwards.
+- **Decision:** Meltano (`tap-csv` → `target-postgres`, both the MeltanoLabs variant). The pipeline is ELT: extract and load first, light transformations afterwards.
 - **Why:** taught in the course, configuration is declarative (YAML), Python-based. Both plugins are maintained and run on the Python 3.13 of the Airflow image with no workaround.
-- **Project layout:** `meltano/meltano.yml` holds the whole load definition (the 7 streams with their keys, host, schema, `load_method`) and is versioned together with the plugin lock files. Only the credentials (user, password, database) are left out: Terraform injects them as `TARGET_POSTGRES_*` env vars from the `warehouse-credentials` Secret. `meltano install` runs at image build time, so tasks never download anything while running.
+- **Project layout:** `meltano/meltano.yml` holds the whole load definition (the 7 streams with their keys, host, schema, `load_method`) and is versioned together with the plugin lock files. Only the credentials (user, password, database) are left out: Terraform injects them as `TARGET_POSTGRES_*` env vars from the `warehouse-credentials` Secret. `meltano install` runs at image build time, so tasks never download anything while running. Both plugins are pinned to the exact versions tested (`tap-csv` to a git commit, since its `v1.2.0` tag points to an older one; `target-postgres` to `0.8.1`), so a rebuild cannot pull a different plugin.
 - **Environment required:** Meltano 4 refuses to run without an environment (`A Meltano environment must be specified`), so the project defines a single one, `prod`, as default. Found when the first `meltano run` in the cluster failed.
 - **Alternatives:** Embulk. The S3 targets for Meltano (`target-s3-csv`, `target-s3`) were tested and are not maintained: they pin 2021-era dependencies (`boto3` 1.17, `pyarrow` 10) that fail on Python 3.13.
 
@@ -36,7 +36,11 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Decision:** `load_method: upsert`, with the primary key of each table declared in `tap-csv` (the first column of each file). Running the same DAG twice gives the same result: rows are updated, not duplicated.
 - **Why:** it is a native feature of the target, needs no extra task and the table keeps a real primary key. The data was profiled: no duplicated or empty keys in any of the 7 files.
 - **Tested, not assumed:** `load_method: overwrite` looked simpler but did **not** overwrite with `tap-csv` (the target only truncates when the tap sends an `ACTIVATE_VERSION` message, and `tap-csv` does not), so two runs produced 20 rows. A `DROP TABLE` task before each load would work but is a home-made version of a standard pattern, so it was dropped in favour of upsert.
-- **Known limits:** rows deleted at the source are not removed from `raw`; and a duplicated key in a future delivery would make the load fail (which at least signals the problem).
+- **Rows deleted at the source: detected, not fixed (deliberate).** Upsert never deletes, so if a new delivery has fewer rows, the old rows stay in `raw`, `raw` ends up with more rows than the file, and `validate_counts` fails the run. Nothing reaches `standard`, which keeps the last good version. This is kept on purpose:
+  - The pipeline cannot tell a real deletion from a truncated or partial export (a common failure of legacy exports). Deleting rows automatically would turn a broken file into silent data loss; failing makes a person look at it.
+  - The automatic alternatives were weighed: `TRUNCATE` + load before each run would mirror any file blindly, including a broken one, and leave `raw` empty while loading; a delete marker (`ACTIVATE_VERSION` / `hard_delete`) needs a tap that sends it, and `tap-csv` does not.
+  - Recovery today: once the deletion is confirmed as real, empty the affected `raw` table (`TRUNCATE raw.<table>`) and re-run the DAG.
+- **Duplicated keys:** a duplicated key in a future delivery makes the load fail, which also signals the problem instead of hiding it.
 
 ## D6. Kubernetes and Airflow deployment
 - **Decision:** Minikube + official Airflow Helm chart, applied through Terraform (`helm_release`). Custom Airflow image with Meltano in an isolated virtualenv; Meltano is called by the DAG.
@@ -60,7 +64,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **In a team:** use a remote backend (with locking) and one state per environment.
 
 ## D9. CI/CD
-- **Decision:** lightweight GitHub Actions, triggered on pull requests and on pushes to `develop` and `main`: `terraform fmt`/`validate` (no credentials), Python lint, DAG import test. `terraform apply` is manual from the local machine.
+- **Decision:** lightweight GitHub Actions, triggered on pull requests and on pushes to `develop` and `main`: `terraform fmt`/`validate` (no credentials), `ruff` lint and format check, and a DAG import test that runs inside the project image built from the same Dockerfile as the cluster. `terraform apply` is manual from the local machine.
 - **Why:** applying from CI would require a cluster reachable from the internet, which is out of proportion for a local Minikube.
 
 ## D10. Cost and cleanup
@@ -74,7 +78,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **Lesson learned:** check that every container image and plugin exists and runs *before* writing the infrastructure around it. The MinIO chart installed fine, but its image could no longer be pulled.
 
 ## D12. Transformations: raw → standard → curated
-- **Decision:** the layers are built with plain SQL, run as Airflow tasks against the warehouse (a connection configured from the Kubernetes Secret). `standard` casts types (integers, numerics, dates and timestamps), turns blank text into NULL, drops the Meltano `_sdc_*` columns and adds two metadata columns, `source_extracted_at` (when Meltano read the file) and `processed_at` (when the table was built). Column names already arrive in snake_case, so nothing is renamed. `curated` is created but empty: it waits for the business rules that define the standard → curated transformations (the DAG has a placeholder task for it). The data was profiled beforehand (no duplicated or empty keys), so no deduplication is needed.
+- **Decision:** the layers are built with plain SQL, run as Airflow tasks against the warehouse (a connection configured from the Kubernetes Secret). `standard` casts types (integers, numerics, dates and timestamps), turns blank text into NULL, drops the Meltano `_sdc_*` columns and adds two metadata columns, `source_extracted_at` (when Meltano read the file) and `processed_at` (when the table was built). Column names already arrive in snake_case, so nothing is renamed. `curated` holds one example table, `resumo_agencias`: one row per branch with distinct customers, accounts, total balance, number of transactions, and money in and out (the source sign convention: positive = in, negative = out), rounded to cents. Accounts and transactions are aggregated separately before joining, so one-to-many joins cannot inflate the numbers. The real curated rules would come from the business; this table shows the layer working end to end and answers a typical first question ("how does each branch perform?"). It is a table, not a view, so rebuilding `standard` never conflicts with dependent objects. The data was profiled beforehand (no duplicated or empty keys), so no deduplication is needed.
 - **Why:** the data is a few MB, so SQL in Postgres is the simplest tool and the language the whole team already knows. Each task is a `.sql` file, easy to read, review and explain.
 - **Alternatives:** Spark/Glue jobs (a lot of infrastructure for a few MB); dbt (a good fit, but one more tool to install, configure and explain).
 - **Production path:** the same layers on object storage with a managed engine (Glue, Athena or dbt); the SQL is largely reusable.
@@ -84,13 +88,14 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 - **One ingest task per table**, so a failure retries only that table and the UI shows each load. Each task runs `meltano el tap-csv target-postgres --select <table>`.
 - **`max_active_tasks=2`.** Meltano keeps its run state in a local SQLite file, so the DAG runs at most two tasks at a time instead of all seven loads at once. Meltano also refuses two runs with the same state ID, so each table has its own (`--state-id banvic-<table>`). The data is small, so more parallelism would gain seconds and add risk.
 - **Sensor:** a `PythonSensor` (reschedule mode). `FileSensor` was not used: it needs a filesystem connection and watches one file per task. A scheduled run proceeds only when all 7 files are **newer than the start of the last successful run** (`prev_start_date_success`), so the daily schedule does not reprocess old files; a manual run only needs the files to exist, because whoever triggers it means it. If no new delivery arrives within 30 minutes the sensor skips (`soft_fail`) instead of failing: a day without a delivery is not an incident. Trade-off: a delivery that never comes also shows up as a skipped run, not a red one. The file time is the delivery time because `deliver_source_files.py` stamps it (`minikube cp` would keep the original modification time).
-- **Validation:** one task compares the row count of each CSV (parsed with `csv.reader`, since quoted fields may contain line breaks) with `count(*)` of the `raw` table, and fails on any difference.
+- **Validation:** one task compares the row count of each CSV (parsed with `csv.reader`, since quoted fields may contain line breaks) with `count(*)` of the `raw` table, and fails on any difference. It has no retries: a count mismatch is a data problem that waiting will not fix.
+- **One run at a time (`max_active_runs=1`).** A manual run overlapping a scheduled one would load and rebuild the same tables concurrently; the second run now waits in the queue.
 - **Standard is rebuilt, not patched:** each `.sql` file does `DROP TABLE` + `CREATE TABLE AS` + primary key, and Airflow runs it in a single transaction. Re-running is safe and readers never see a half-built table.
-- **Resilience:** `retries=2` with a 30 s `retry_delay` (a transient failure, such as Postgres restarting, has time to clear) and an `on_failure_callback` that logs DAG, task, run, attempt and error in one line. The 30 s delay is short on purpose for the demo; a real deployment would use minutes, possibly with exponential backoff.
+- **Resilience:** `retries=2` with a 30 s `retry_delay` (a transient failure, such as Postgres restarting, has time to clear) and an `on_failure_callback` that logs DAG, task, run, attempt and error in one line. The 30 s delay is short on purpose for the demo; a real deployment would use minutes, possibly with exponential backoff. Timeouts make a hung task fail visibly instead of holding one of the two slots: 15 minutes per task (`execution_timeout`) and 1 hour per run (`dagrun_timeout`, which covers the 30-minute sensor wait plus a normal run of about a minute).
 - **SQL in files:** the transformations live in `dags/sql/standard/*.sql`, outside the Python code, so they can be reviewed and changed without touching the DAG.
 
 ## Possible future improvements (optional, not committed to)
-- **Deletions at the source.** With upsert, rows removed from the CSV stay in `raw` (D5). Handling them needs a full refresh or a delete marker (`ACTIVATE_VERSION` / `hard_delete` in the target), which requires a tap that sends those messages.
+- **Deletions at the source.** Today they are detected, not applied (D5). Applying them safely needs a delete marker (`ACTIVATE_VERSION` / `hard_delete` in the target, which requires a tap that sends it) or a "delivery complete" signal from the source that confirms the file is whole.
 - **History by delivery date.** Today a new delivery updates the tables in place and no history is kept. To keep it, add a delivery-date column (or a snapshot table) and let downstream layers choose which deliveries to read.
 - **Automatic delivery to the node.** Today `scripts/deliver_source_files.py` is run by hand (see D2). A host-side watcher could run it when `data/` changes, at the cost of a process that must stay running.
 
