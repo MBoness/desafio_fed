@@ -7,7 +7,7 @@ import sys
 
 from airflow.models import DagBag
 
-bag = DagBag("/opt/airflow/dags", include_examples=False)
+bag = DagBag( "/opt/airflow/dags",include_examples = False )
 
 print("DAGs found:", sorted(bag.dags))
 for path, error in bag.import_errors.items():
