@@ -1,4 +1,4 @@
-﻿# BanVic data platform (Data Engineer certification challenge)
+# BanVic data platform (Data Engineer certification challenge)
 
 Proof of concept: ingest the BanVic ERP tables (7 CSV files, simulating an on-premises legacy system) into a Postgres data warehouse with `raw`, `standard` and `curated` layers, orchestrated by Airflow running on a local Kubernetes cluster. Everything runs on the local machine; no cloud account is needed.
 
@@ -39,7 +39,7 @@ flowchart LR
 | Source | Local folder with the 7 BanVic CSV files (on-premises simulation) |
 | Cluster | Minikube (Docker driver) |
 | Orchestration | Apache Airflow 3.2.2, official Helm chart, `LocalExecutor` |
-| Ingestion | Meltano 4.4.1 (`tap-csv` â†’ `target-postgres`), installed in the Airflow image |
+| Ingestion | Meltano 4.4.1 (`tap-csv` → `target-postgres`), installed in the Airflow image |
 | Warehouse | Postgres 17 in the cluster, schemas `raw`, `standard`, `curated` |
 | Infrastructure as code | Terraform (namespace, volumes, Secrets, Postgres, Helm release) |
 
@@ -119,7 +119,7 @@ SELECT * FROM standard.transacoes LIMIT 5;
 
 ## Ingestion strategy
 
-The DAG `banvic_pipeline` runs daily and can also be triggered by hand. Because the source is a file delivery, a scheduled run only proceeds when the 7 files are newer than the last successful run; it waits up to 30 minutes for them and is skipped if they do not arrive. A manual run only needs the files to exist. At most two tasks run at the same time.
+The DAG `banvic_pipeline` runs daily and can also be triggered by hand. Because the source is a file delivery, a scheduled run only proceeds when the 7 files are newer than the last successful run; it waits up to 30 minutes for them and is skipped if they do not arrive. A manual run only needs the files to exist. Only one run is active at a time, with at most two tasks running at once.
 
 ```
 wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7) > build_curated
@@ -133,11 +133,12 @@ wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7
 
 **Idempotency.** Running the DAG again gives the same result. The load is an upsert by primary key (no duplicated rows), and each standard table is dropped and rebuilt in a single transaction.
 
-**Known limits** (details in [DECISIONS.md](DECISIONS.md), D5): rows deleted at the source are not removed from `raw`, and a duplicated key in a future delivery makes the load fail.
+**Known limits** (details in [DECISIONS.md](DECISIONS.md), D5): rows deleted at the source are detected, not applied. Upsert keeps them in `raw`, so `validate_counts` fails and nothing reaches `standard`. This is deliberate: the pipeline cannot tell a real deletion from a partial export, so a person decides. A duplicated key in a future delivery also makes the load fail.
 
 ## Monitoring and failure handling
 
-- **Retries.** Every task retries twice, waiting 30 seconds between attempts, so transient failures can clear.
+- **Retries.** Every task retries twice, waiting 30 seconds between attempts, so transient failures can clear. The row-count validation does not retry: a data problem does not fix itself.
+- **Timeouts.** A task that hangs fails after 15 minutes, and a run after 1 hour, instead of blocking the pipeline.
 - **Failure log.** A failure callback writes one line with DAG, task, run, attempt and error, easy to find in the task log.
 - **Data validation.** The row-count check stops the pipeline before bad data reaches `standard`.
 - **Sensor timeout.** If no new delivery arrives, the sensor stops after 30 minutes and the run is skipped instead of waiting forever.

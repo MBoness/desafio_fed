@@ -40,14 +40,14 @@ resource "kubernetes_persistent_volume_v1" "source_files" {
       host_path {
         path = var.source_files_node_path
         # Created empty if the files were not delivered yet,
-        # so pods still start and the FileSensor simply waits.
+        # so pods still start and the sensor simply waits.
         type = "DirectoryOrCreate"
       }
     }
   }
 }
 
-# The claim is what Airflow pods will mount (wired in the Helm values later).
+# The claim is what Airflow pods mount (see `volumes` in airflow.tf).
 resource "kubernetes_persistent_volume_claim_v1" "source_files" {
   metadata {
     name      = "banvic-source-files"
