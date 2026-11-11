@@ -1,0 +1,51 @@
+name: CI
+
+# Checks only (no deploy): the cluster is local, so there is nothing to apply from CI.
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.6"
+      - run: terraform fmt -check -recursive
+      # -backend=false: validate the code without touching any state.
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.15.0"
+          src: dags scripts tests
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.15.0"
+          args: format --check
+          src: dags scripts tests
+
+  dag-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Same Dockerfile used in the cluster, so the test runs with the real
+      # Airflow version, providers and Meltano plugins.
+      - run: docker build -t banvic-airflow:ci -f docker/airflow.Dockerfile .
+      - run: >
+          docker run --rm -v "$PWD/tests:/tests:ro"
+          --entrypoint python banvic-airflow:ci /tests/check_dag_imports.py

@@ -1,4 +1,4 @@
-﻿variable "kubeconfig_path" {
+variable "kubeconfig_path" {
   description = "Path to the kubeconfig file used to reach the cluster."
   type        = string
   default     = "~/.kube/config"

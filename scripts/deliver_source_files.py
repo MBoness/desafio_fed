@@ -34,7 +34,9 @@ def run(*args: str) -> None:
 def main() -> None:
     csv_files = sorted((REPO_ROOT / SOURCE_DIR).glob("*.csv"))
     if not csv_files:
-        sys.exit(f"No CSV files found in ./{SOURCE_DIR}. Copy the BanVic files there first.")
+        sys.exit(
+            f"No CSV files found in ./{SOURCE_DIR}. Copy the BanVic files there first."
+        )
 
     run("minikube", "ssh", "--", "sudo", "mkdir", "-p", LANDING_DIR)
 
