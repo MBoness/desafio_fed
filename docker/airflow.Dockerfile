@@ -17,5 +17,5 @@ COPY --chown=airflow:0 meltano/ /opt/airflow/meltano/
 ENV MELTANO_PROJECT_ROOT=/opt/airflow/meltano
 RUN cd /opt/airflow/meltano && meltano install
 
-# DAGs are baked into the image so code and runtime ship together (see DECISIONS.md).
+# DAGs are baked into the image so code and runtime ship together.
 COPY --chown=airflow:0 dags/ /opt/airflow/dags/

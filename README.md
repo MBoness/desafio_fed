@@ -44,7 +44,19 @@ flowchart LR
 | Warehouse | Postgres 17 in the cluster, schemas `raw`, `standard`, `curated` |
 | Infrastructure as code | Terraform (namespace, volumes, Secrets, Postgres, Helm release) |
 
-Design decisions and their reasons are in [DECISIONS.md](DECISIONS.md).
+## Design notes
+
+- **Local and reproducible.** Everything runs on one machine with official, public images, so anyone can reproduce it with no cloud account and no cost. Object storage was tried first (S3 on AWS, then MinIO) and dropped: S3 needs an account, and the official MinIO images are no longer publicly pullable. Postgres is one of the destinations the challenge allows. In production this would be an object-storage data lake with a managed engine; the Meltano and Airflow parts would stay the same.
+- **ELT with plain SQL.** Meltano extracts and loads the data as it arrived (`raw`), and the next layers are SQL files run by Airflow. At a few MB, SQL in Postgres is the simplest tool to read, review and explain; Spark or dbt would add tooling without a gain at this scale.
+- **Upsert instead of overwrite.** `load_method: overwrite` was tested and does not overwrite with `tap-csv` (two runs gave 20 rows), so the load is an upsert by primary key, which is idempotent by design. The keys were profiled beforehand: no duplicated or empty keys in any file.
+- **Meltano plugins pinned.** Both plugins are pinned to the exact versions tested and installed at image build time, so a rebuild cannot pull a different plugin and tasks never download anything while running.
+- **DAG baked into the image.** Code and runtime (Airflow, Meltano, DAGs) ship as one versioned unit, which is predictable. The trade-off is a rebuild and a new tag on every DAG change; `gitSync` would avoid that at the cost of depending on a GitHub branch.
+- **`LocalExecutor`.** The chart default (Celery) adds workers and Redis, which is heavy for a local cluster and unnecessary here. Meltano keeps its state in a local SQLite file, so at most two tasks run at once.
+- **Warehouse separate from Airflow's metadata database.** Orchestration state and business data have different lifecycles. The three schemas are created by an init script, and the empty default `public` schema is dropped.
+- **One task per table** so a failure retries only that table and the UI shows each load. Each `standard` table is dropped and rebuilt in a single transaction, so re-running is safe and readers never see a half-built table.
+- **Local Terraform state**, git-ignored: the simplest option for one person, and it holds the generated passwords. In a team it would be a remote backend with locking.
+- **CI checks, no apply.** GitHub Actions validates the code on every pull request, but does not deploy: that would need a cluster reachable from the internet, which is out of proportion for a local Minikube.
+- **Event-driven delivery** (an Airflow asset watcher fired by a "delivery complete" marker) is the production evolution of the sensor. It was not done because the landing folder is read-only and the marker would add a convention between source and pipeline for no gain at this scale.
 
 ## Repository layout
 
@@ -141,7 +153,7 @@ wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7
 
 **Idempotency.** Running the DAG again gives the same result. The load is an upsert by primary key (no duplicated rows), and each standard and curated table is dropped and rebuilt in a single transaction.
 
-**Known limits** (details in [DECISIONS.md](DECISIONS.md), D5): rows deleted at the source are detected, not applied. Upsert keeps them in `raw`, so `validate_counts` fails and nothing reaches `standard`. This is deliberate: the pipeline cannot tell a real deletion from a partial export, so a person decides. Once the deletion is confirmed, empty the affected table (`TRUNCATE raw.<table>;`) and trigger the DAG again. A duplicated key in a future delivery also makes the load fail.
+**Known limits:** rows deleted at the source are detected, not applied. Upsert keeps them in `raw`, so `validate_counts` fails and nothing reaches `standard`. This is deliberate: the pipeline cannot tell a real deletion from a partial export, so a person decides. Once the deletion is confirmed, empty the affected table (`TRUNCATE raw.<table>;`) and trigger the DAG again. A duplicated key in a future delivery also makes the load fail.
 
 ## Monitoring and failure handling
 

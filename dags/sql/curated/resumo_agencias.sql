@@ -1,6 +1,6 @@
 -- standard -> curated: one row per branch with its customer base and account movement.
--- Example analyst-ready table (see DECISIONS.md, D12): the real curated rules would come
--- from the business. Rebuilt on every run; Airflow runs it in a single transaction.
+-- Example analyst-ready table: the real curated rules would come from the business.
+-- Rebuilt on every run; Airflow runs it in a single transaction.
 -- Accounts and transactions are aggregated separately before the join, so counts and
 -- sums are not multiplied by the one-to-many joins.
 drop table if exists curated.resumo_agencias;
