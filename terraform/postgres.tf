@@ -4,7 +4,7 @@ locals {
   warehouse_db          = "banvic"
   warehouse_user        = "banvic"
 
-  # One schema per data layer (see DECISIONS.md, D3).
+  # One schema per data layer: raw, standard and curated.
   warehouse_schemas = ["raw", "standard", "curated"]
 }
 

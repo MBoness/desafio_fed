@@ -18,7 +18,7 @@ plugins:
       pip_url: git+https://github.com/MeltanoLabs/tap-csv.git@c38030a4a91f5132653a1891548b9a1df0702e99
       config:
         # One stream per file. `keys` is the primary key: it is what lets the
-        # target upsert, so re-running the load never duplicates rows (DECISIONS D5).
+        # target upsert, so re-running the load never duplicates rows.
         files:
           - { entity: agencias,            path: /opt/airflow/source/agencias.csv,            keys: [cod_agencia] }
           - { entity: clientes,            path: /opt/airflow/source/clientes.csv,            keys: [cod_cliente] }

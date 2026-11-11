@@ -20,6 +20,9 @@ crash.log
 data/
 *.csv
 
+# --- Personal working notes (not part of the deliverable) ---
+DECISIONS.md
+
 # --- Python ---
 __pycache__/
 *.py[cod]
