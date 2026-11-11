@@ -31,7 +31,8 @@ flowchart LR
     meltano -- "upsert by primary key" --> raw
     dag -- "SQL: types, nulls, metadata" --> std
     raw --> std
-    std -. "waiting for business rules" .-> cur
+    dag -- "SQL: branch summary" --> cur
+    std --> cur
 ```
 
 | Piece | Choice |
@@ -79,8 +80,8 @@ python scripts/deliver_source_files.py
 **3. Build the Airflow image and load it into the cluster.** The tag must match `airflow_image_tag` in `terraform/variables.tf`:
 
 ```bash
-docker build -t banvic-airflow:0.2.5 -f docker/airflow.Dockerfile .
-minikube image load banvic-airflow:0.2.5
+docker build -t banvic-airflow:0.2.6 -f docker/airflow.Dockerfile .
+minikube image load banvic-airflow:0.2.6
 ```
 
 **4. Choose the Airflow admin password.** Create `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):
@@ -129,7 +130,7 @@ wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7
 2. **Extract and load (raw).** One Meltano task per table reads the CSV with `tap-csv` and loads it with `target-postgres` into schema `raw`. Everything arrives as text, plus Meltano's `_sdc_*` columns. The primary key of each table is declared in [`meltano/meltano.yml`](meltano/meltano.yml).
 3. **Validation.** `validate_counts` compares the number of rows in each CSV with the rows in the `raw` table and fails on any difference.
 4. **Standard.** One SQL file per table in [`dags/sql/standard/`](dags/sql/standard) casts the types (integers, numerics, dates, timestamps), turns blank text into NULL, drops the `_sdc_*` columns and adds `source_extracted_at` and `processed_at`.
-5. **Curated.** The schema exists, but it is empty: the transformations are waiting for the business rules. `build_curated` is a placeholder task that says so in its log.
+5. **Curated.** [`dags/sql/curated/resumo_agencias.sql`](dags/sql/curated/resumo_agencias.sql) builds `curated.resumo_agencias`: one row per branch with its customers, accounts, total balance, number of transactions, and money in and out. It is an example analyst-ready table; the real curated rules would come from the business.
 
 **Idempotency.** Running the DAG again gives the same result. The load is an upsert by primary key (no duplicated rows), and each standard table is dropped and rebuilt in a single transaction.
 

@@ -7,7 +7,7 @@ a file delivery: a scheduled run waits (up to 30 minutes) for files newer than t
 last successful run, and is skipped if none arrive. A manual run only needs the files.
 Every step is idempotent, so re-running the whole DAG, or any single task, is safe:
 - ingest: Meltano upserts by primary key (see meltano/meltano.yml);
-- standardize: each table is dropped and rebuilt in one transaction.
+- standardize and build_curated: each table is dropped and rebuilt in one transaction.
 """
 
 import csv
@@ -129,16 +129,14 @@ with DAG(
         if mismatches:
             raise ValueError("Row count mismatch: " + "; ".join(mismatches))
 
-    @task
-    def build_curated():
-        """Placeholder: the curated layer waits for business rules."""
-        log.info(
-            "Schema `curated` exists. Waiting for the business rules to define "
-            "the standard -> curated transformations; nothing to build yet."
-        )
+    # Example analyst-ready table; it reads several standard tables, so it runs last.
+    build_curated = SQLExecuteQueryOperator(
+        task_id="build_curated",
+        conn_id=WAREHOUSE_CONN_ID,
+        sql="sql/curated/resumo_agencias.sql",
+    )
 
     validate = validate_counts()
-    curated = build_curated()
 
     for table in TABLES:
         ingest = BashOperator(
@@ -156,4 +154,4 @@ with DAG(
             conn_id=WAREHOUSE_CONN_ID,
             sql=f"sql/standard/{table}.sql",  # relative to this DAG folder
         )
-        wait_for_files >> ingest >> validate >> standardize >> curated
+        wait_for_files >> ingest >> validate >> standardize >> build_curated
