@@ -37,15 +37,20 @@ TABLES = [
 
 
 def log_failure(context):
-    """Failure callback: one clear log line saying what failed and where to look."""
-    ti = context["task_instance"]
+    """Failure callback: one clear log line saying what failed and where to look.
+
+    Used for tasks and for the whole run: a run that hits `dagrun_timeout` is
+    stopped without task callbacks, so only the run-level callback reports it.
+    """
+    dag_run = context["dag_run"]
+    ti = context.get("task_instance")  # absent in the run-level callback
     log.error(
         "PIPELINE FAILURE | dag=%s task=%s run=%s try=%s | error=%s",
-        ti.dag_id,
-        ti.task_id,
-        context["run_id"],
-        ti.try_number,
-        context.get("exception"),
+        dag_run.dag_id,
+        ti.task_id if ti else "-",
+        dag_run.run_id,
+        ti.try_number if ti else "-",
+        context.get("exception") or context.get("reason"),
     )
 
 
@@ -88,6 +93,7 @@ with DAG(
     # A normal run takes about a minute (plus up to 30 minutes of sensor wait);
     # anything longer is stuck and should fail visibly instead of holding the slot.
     dagrun_timeout=timedelta(hours=1),
+    on_failure_callback=log_failure,  # run-level failures, e.g. the timeout above
     # Two tasks at a time. Meltano keeps its run state in a local SQLite file, so
     # more parallelism would only add lock contention for a few MB of data.
     max_active_tasks=2,

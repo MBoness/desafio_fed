@@ -49,7 +49,7 @@ Design decisions and their reasons are in [DECISIONS.md](DECISIONS.md).
 ## Repository layout
 
 ```
-dags/                  Airflow DAG and the SQL of the standard layer
+dags/                  Airflow DAG and the SQL of the standard and curated layers
 meltano/               Meltano project (streams, primary keys, target settings)
 docker/                Dockerfile of the custom Airflow image
 terraform/             Cluster resources, Airflow and the warehouse
@@ -68,7 +68,7 @@ Run the commands from the repository root.
 **1. Start the cluster**
 
 ```bash
-minikube start --driver=docker --cpus=4 --memory=6144
+minikube start --driver=docker --cpus=4 --memory=6144 --kubernetes-version=v1.37.0
 ```
 
 **2. Deliver the source files** to the cluster node (simulates the legacy export arriving):
@@ -80,8 +80,8 @@ python scripts/deliver_source_files.py
 **3. Build the Airflow image and load it into the cluster.** The tag must match `airflow_image_tag` in `terraform/variables.tf`:
 
 ```bash
-docker build -t banvic-airflow:0.2.6 -f docker/airflow.Dockerfile .
-minikube image load banvic-airflow:0.2.6
+docker build -t banvic-airflow:0.2.7 -f docker/airflow.Dockerfile .
+minikube image load banvic-airflow:0.2.7
 ```
 
 **4. Choose the Airflow admin password.** Create `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):
@@ -116,6 +116,13 @@ kubectl exec -it warehouse-0 -n airflow -- sh -c 'psql -U $POSTGRES_USER -d $POS
 ```sql
 SELECT count(*) FROM raw.transacoes;       -- 71999
 SELECT * FROM standard.transacoes LIMIT 5;
+SELECT * FROM curated.resumo_agencias;     -- 10 rows, one per branch
+```
+
+To browse the tables in a SQL client (e.g. DBeaver), forward the warehouse to a free local port and connect to `localhost:5433`, database and user `banvic`. The password is in the `warehouse-credentials` Secret (key `POSTGRES_PASSWORD`, base64-encoded):
+
+```bash
+kubectl port-forward svc/warehouse 5433:5432 -n airflow
 ```
 
 ## Ingestion strategy
@@ -132,15 +139,15 @@ wait_for_files > ingest_<table> (x7) > validate_counts > standardize_<table> (x7
 4. **Standard.** One SQL file per table in [`dags/sql/standard/`](dags/sql/standard) casts the types (integers, numerics, dates, timestamps), turns blank text into NULL, drops the `_sdc_*` columns and adds `source_extracted_at` and `processed_at`.
 5. **Curated.** [`dags/sql/curated/resumo_agencias.sql`](dags/sql/curated/resumo_agencias.sql) builds `curated.resumo_agencias`: one row per branch with its customers, accounts, total balance, number of transactions, and money in and out. It is an example analyst-ready table; the real curated rules would come from the business.
 
-**Idempotency.** Running the DAG again gives the same result. The load is an upsert by primary key (no duplicated rows), and each standard table is dropped and rebuilt in a single transaction.
+**Idempotency.** Running the DAG again gives the same result. The load is an upsert by primary key (no duplicated rows), and each standard and curated table is dropped and rebuilt in a single transaction.
 
-**Known limits** (details in [DECISIONS.md](DECISIONS.md), D5): rows deleted at the source are detected, not applied. Upsert keeps them in `raw`, so `validate_counts` fails and nothing reaches `standard`. This is deliberate: the pipeline cannot tell a real deletion from a partial export, so a person decides. A duplicated key in a future delivery also makes the load fail.
+**Known limits** (details in [DECISIONS.md](DECISIONS.md), D5): rows deleted at the source are detected, not applied. Upsert keeps them in `raw`, so `validate_counts` fails and nothing reaches `standard`. This is deliberate: the pipeline cannot tell a real deletion from a partial export, so a person decides. Once the deletion is confirmed, empty the affected table (`TRUNCATE raw.<table>;`) and trigger the DAG again. A duplicated key in a future delivery also makes the load fail.
 
 ## Monitoring and failure handling
 
 - **Retries.** Every task retries twice, waiting 30 seconds between attempts, so transient failures can clear. The row-count validation does not retry: a data problem does not fix itself.
 - **Timeouts.** A task that hangs fails after 15 minutes, and a run after 1 hour, instead of blocking the pipeline.
-- **Failure log.** A failure callback writes one line with DAG, task, run, attempt and error, easy to find in the task log.
+- **Failure log.** A failure callback writes one `PIPELINE FAILURE` line with DAG, task, run, attempt and error, easy to find in the task log. The same callback is set on the DAG, so a run stopped by its timeout is reported too.
 - **Data validation.** The row-count check stops the pipeline before bad data reaches `standard`.
 - **Sensor timeout.** If no new delivery arrives, the sensor stops after 30 minutes and the run is skipped instead of waiting forever.
 - **Visibility.** The Airflow UI shows the state and the logs of each task.
