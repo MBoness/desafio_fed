@@ -23,6 +23,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
   - `standard`: validated and cleaned (types, dates, blanks as NULL); no deduplication needed (see D12).
   - `curated`: analyst-ready tables; today one example table, `resumo_agencias` (see D12).
 - **Why:** classic medallion-style separation; each layer has one responsibility, and reruns only touch the layer they write to. Schemas give the same separation as buckets with a single piece of infrastructure.
+- **The default `public` schema is dropped** by the same init script: it is empty, nothing uses it (every query is schema-qualified), and removing it leaves exactly one schema per layer.
 - **Postgres is separate from Airflow's metadata database** on purpose: orchestration state and business data have different lifecycles. It is a small StatefulSet with the official `postgres:17-alpine` image; the schemas come from an init script in a ConfigMap, so they exist as soon as the database starts.
 
 ## D4. Ingestion tool
@@ -74,6 +75,7 @@ Format: **Decision** → **Why** → **Alternatives considered**.
 ## D11. Tooling and language
 - Shell: Git Bash on Windows. Helper scripts are written in Python (standard library only) rather than shell, so they run on any OS and avoid Git Bash path rewriting.
 - Code, comments and documentation in English.
+- SQL follows the Indicium SQL style guide (lowercase, leading commas, explicit `as` and `inner join`, indented CTEs, `count(*)`, lines up to 100 characters), checked with SQLFluff 1.4.5. One rule is deliberately ignored: L034 ("simple columns before calculated ones"), because it would push the metadata column `source_extracted_at` before the primary key in every `standard` table; the logical order (keys first, metadata last) is worth more. Rewriting the files was verified by comparing every table, row by row, with the previous version.
 - The source CSV files are **not** committed (see `.gitignore`).
 - **Lesson learned:** check that every container image and plugin exists and runs *before* writing the infrastructure around it. The MinIO chart installed fine, but its image could no longer be pulled.
 

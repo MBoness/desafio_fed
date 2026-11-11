@@ -1,14 +1,14 @@
-DROP TABLE IF EXISTS standard.transacoes;
+drop table if exists standard.transacoes;
 
-CREATE TABLE standard.transacoes AS
-SELECT
-    cod_transacao::integer                           AS cod_transacao,
-    num_conta::integer                               AS num_conta,
-    NULLIF(btrim(data_transacao), '')::timestamptz   AS data_transacao,
-    NULLIF(btrim(nome_transacao), '')                AS nome_transacao,
-    NULLIF(btrim(valor_transacao), '')::numeric      AS valor_transacao,
-    _sdc_extracted_at                                AS source_extracted_at,
-    now()                                            AS processed_at
-FROM raw.transacoes;
+create table standard.transacoes as
+select
+    cod_transacao::integer as cod_transacao
+    , num_conta::integer as num_conta
+    , nullif(btrim(data_transacao), '')::timestamptz as data_transacao
+    , nullif(btrim(nome_transacao), '') as nome_transacao
+    , nullif(btrim(valor_transacao), '')::numeric as valor_transacao
+    , _sdc_extracted_at as source_extracted_at
+    , now() as processed_at
+from raw.transacoes;
 
-ALTER TABLE standard.transacoes ADD PRIMARY KEY (cod_transacao);
+alter table standard.transacoes add primary key (cod_transacao);

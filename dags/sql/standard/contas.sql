@@ -1,18 +1,18 @@
-DROP TABLE IF EXISTS standard.contas;
+drop table if exists standard.contas;
 
-CREATE TABLE standard.contas AS
-SELECT
-    num_conta::integer                                      AS num_conta,
-    cod_cliente::integer                                    AS cod_cliente,
-    cod_agencia::integer                                    AS cod_agencia,
-    cod_colaborador::integer                                AS cod_colaborador,
-    NULLIF(btrim(tipo_conta), '')                           AS tipo_conta,
-    NULLIF(btrim(data_abertura), '')::timestamptz           AS data_abertura,
-    NULLIF(btrim(saldo_total), '')::numeric                 AS saldo_total,
-    NULLIF(btrim(saldo_disponivel), '')::numeric            AS saldo_disponivel,
-    NULLIF(btrim(data_ultimo_lancamento), '')::timestamptz  AS data_ultimo_lancamento,
-    _sdc_extracted_at                                       AS source_extracted_at,
-    now()                                                   AS processed_at
-FROM raw.contas;
+create table standard.contas as
+select
+    num_conta::integer as num_conta
+    , cod_cliente::integer as cod_cliente
+    , cod_agencia::integer as cod_agencia
+    , cod_colaborador::integer as cod_colaborador
+    , nullif(btrim(tipo_conta), '') as tipo_conta
+    , nullif(btrim(data_abertura), '')::timestamptz as data_abertura
+    , nullif(btrim(saldo_total), '')::numeric as saldo_total
+    , nullif(btrim(saldo_disponivel), '')::numeric as saldo_disponivel
+    , nullif(btrim(data_ultimo_lancamento), '')::timestamptz as data_ultimo_lancamento
+    , _sdc_extracted_at as source_extracted_at
+    , now() as processed_at
+from raw.contas;
 
-ALTER TABLE standard.contas ADD PRIMARY KEY (num_conta);
+alter table standard.contas add primary key (num_conta);

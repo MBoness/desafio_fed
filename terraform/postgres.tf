@@ -41,7 +41,11 @@ resource "kubernetes_config_map_v1" "warehouse_init" {
   }
 
   data = {
-    "01-schemas.sql" = join("\n", [for s in local.warehouse_schemas : "CREATE SCHEMA IF NOT EXISTS ${s};"])
+    "01-schemas.sql" = join("\n", concat(
+      [for s in local.warehouse_schemas : "CREATE SCHEMA IF NOT EXISTS ${s};"],
+      # `public` ships with every Postgres database and no layer uses it.
+      ["DROP SCHEMA IF EXISTS public;"],
+    ))
   }
 }
 
