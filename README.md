@@ -79,8 +79,8 @@ python scripts/deliver_source_files.py
 **3. Build the Airflow image and load it into the cluster.** The tag must match `airflow_image_tag` in `terraform/variables.tf`:
 
 ```bash
-docker build -t banvic-airflow:0.2.4 -f docker/airflow.Dockerfile .
-minikube image load banvic-airflow:0.2.4
+docker build -t banvic-airflow:0.2.5 -f docker/airflow.Dockerfile .
+minikube image load banvic-airflow:0.2.5
 ```
 
 **4. Choose the Airflow admin password.** Create `terraform/terraform.tfvars` (git-ignored, loaded automatically by Terraform):

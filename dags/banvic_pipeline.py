@@ -82,6 +82,12 @@ with DAG(
     schedule="@daily",
     start_date=datetime(2026, 1, 1),
     catchup=False,
+    # One run at a time: a manual run overlapping a scheduled one would load and
+    # rebuild the same tables concurrently.
+    max_active_runs=1,
+    # A normal run takes about a minute (plus up to 30 minutes of sensor wait);
+    # anything longer is stuck and should fail visibly instead of holding the slot.
+    dagrun_timeout=timedelta(hours=1),
     # Two tasks at a time. Meltano keeps its run state in a local SQLite file, so
     # more parallelism would only add lock contention for a few MB of data.
     max_active_tasks=2,
@@ -89,6 +95,8 @@ with DAG(
         "retries": 2,
         # Wait before retrying so a transient failure (e.g. Postgres restarting) can clear.
         "retry_delay": timedelta(seconds=30),
+        # A hung Meltano or SQL task fails instead of blocking one of the two slots.
+        "execution_timeout": timedelta(minutes=15),
         "on_failure_callback": log_failure,
     },
     tags=["banvic", "elt"],
@@ -104,7 +112,8 @@ with DAG(
         soft_fail=True,
     )
 
-    @task
+    # No retries: a count mismatch is a data problem that waiting will not fix.
+    @task(retries=0)
     def validate_counts():
         """Every CSV row must be in raw: compare file rows with table rows."""
         hook = PostgresHook(postgres_conn_id=WAREHOUSE_CONN_ID)
