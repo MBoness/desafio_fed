@@ -1,0 +1,37 @@
+# Meltano project: CSV files -> Postgres warehouse (raw layer).
+# Run by Airflow inside the custom image. Secrets (user, password, database)
+# are NOT here: they come from TARGET_POSTGRES_* environment variables that
+# Terraform injects from the `warehouse-credentials` Kubernetes Secret.
+send_anonymous_usage_stats: false
+
+# Meltano 4 refuses to run without an environment; one is enough here.
+default_environment: prod
+environments:
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-csv
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-csv.git
+      config:
+        # One stream per file. `keys` is the primary key: it is what lets the
+        # target upsert, so re-running the load never duplicates rows (DECISIONS D5).
+        files:
+          - { entity: agencias,            path: /opt/airflow/source/agencias.csv,            keys: [cod_agencia] }
+          - { entity: clientes,            path: /opt/airflow/source/clientes.csv,            keys: [cod_cliente] }
+          - { entity: colaborador_agencia, path: /opt/airflow/source/colaborador_agencia.csv, keys: [cod_colaborador] }
+          - { entity: colaboradores,       path: /opt/airflow/source/colaboradores.csv,       keys: [cod_colaborador] }
+          - { entity: contas,              path: /opt/airflow/source/contas.csv,              keys: [num_conta] }
+          - { entity: propostas_credito,   path: /opt/airflow/source/propostas_credito.csv,   keys: [cod_proposta] }
+          - { entity: transacoes,          path: /opt/airflow/source/transacoes.csv,          keys: [cod_transacao] }
+
+  loaders:
+    - name: target-postgres
+      variant: meltanolabs
+      pip_url: meltanolabs-target-postgres
+      config:
+        host: warehouse # in-cluster Service name
+        port: 5432
+        default_target_schema: raw
+        load_method: upsert
