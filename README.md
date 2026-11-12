@@ -84,7 +84,7 @@ terraform apply
 cd ..
 ```
 
-**6. Open Airflow.** Keep this command running and open <http://localhost:8080>, user `admin`:
+**6. Open Airflow.** Keep this command running and open <http://localhost:8080>, user `admin` and the password you chose in step 4:
 
 ```bash
 kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow
