@@ -35,13 +35,15 @@ flowchart LR
     std --> cur
 ```
 
+Repository structure:
+
 ```
 dags/        Airflow DAG and the SQL of the standard and curated layers
 meltano/     Meltano project (streams, primary keys, target settings)
 docker/      Dockerfile of the custom Airflow image
 terraform/   Cluster resources, Airflow and the warehouse
 scripts/     deliver_source_files.py (simulates the file delivery)
-data/        The 7 CSV files (git-ignored, you provide them)
+data/        The 7 CSV files (git-ignored)
 ```
 
 ## How to run
