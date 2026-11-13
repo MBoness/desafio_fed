@@ -10,10 +10,10 @@ flowchart LR
         csv[("7 CSV files<br/>data/")]
     end
 
-    subgraph mk["Minikube cluster, namespace airflow"]
+    subgraph mk["Minikube cluster"]
         landing["Landing folder<br/>/data/banvic on the node"]
 
-        subgraph af["Airflow (LocalExecutor)"]
+        subgraph af["Airflow (LocalExecutor), namespace airflow"]
             dag["DAG banvic_pipeline"]
             meltano["Meltano<br/>tap-csv to target-postgres"]
         end
@@ -27,12 +27,12 @@ flowchart LR
 
     csv -- "deliver_source_files.py<br/>(stands in for SFTP/NFS)" --> landing
     landing -- "read-only mount" --> meltano
-    dag -- "orchestrates" --> meltano
+    landing -- "sensor and row count check" --> dag
     meltano -- "upsert by primary key" --> raw
-    dag -- "SQL: types, nulls, metadata" --> std
-    raw --> std
-    dag -- "SQL: branch summary" --> cur
-    std --> cur
+    raw -- "after validation: SQL for types, nulls, metadata" --> std
+    std -- "SQL: branch summary" --> cur
+    dag -. "orchestrates" .-> meltano
+    dag -. "runs the SQL" .-> std
 ```
 
 Repository structure:
